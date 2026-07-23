@@ -1,5 +1,5 @@
 import type { BugTicketInput, FeatureTicketInput, TicketInput } from '@/services/jira-integration';
-import type { NormalizedInput, TriageResult } from './types';
+import type { BugContent, ComposedContent, FeatureContent, TriageResult } from './types';
 
 const PRIORITY_TO_SEVERITY: Record<TriageResult['priority'], NonNullable<BugTicketInput['severity']>> = {
   lowest: 'Low',
@@ -17,37 +17,29 @@ const PRIORITY_TO_FEATURE_PRIORITY: Record<TriageResult['priority'], NonNullable
   highest: 'High',
 };
 
-function formatEnvironment(env: NormalizedInput['environment']): string | undefined {
-  if (!env) return undefined;
-  const parts = [env.url, env.browser, env.os, env.appVersion].filter(Boolean);
-  return parts.length > 0 ? parts.join(' | ') : undefined;
-}
-
-/** Turn the pipeline's neutral evidence + triage decision into what the Jira client expects. */
-export function toTicketInput(normalized: NormalizedInput, triage: TriageResult): TicketInput {
-  const stepsOrActions = normalized.entities.userActions?.length
-    ? normalized.entities.userActions
-    : normalized.observations.map((o) => o.statement);
-
+/** Turn the composed ticket content + triage decision into what the Jira client expects. */
+export function toTicketInput(content: ComposedContent, triage: TriageResult): TicketInput {
   if (triage.type === 'bug') {
-    const bug: BugTicketInput = {
+    const bug = content as BugContent;
+    const ticket: BugTicketInput = {
       type: 'Bug',
-      summary: normalized.summary,
-      stepsToReproduce: stepsOrActions,
-      expectedBehavior: normalized.intent,
-      actualBehavior: normalized.summary,
-      environment: formatEnvironment(normalized.environment),
+      summary: bug.summary,
+      stepsToReproduce: bug.stepsToReproduce,
+      expectedBehavior: bug.expectedBehavior,
+      actualBehavior: bug.actualBehavior,
+      environment: bug.environment,
       severity: PRIORITY_TO_SEVERITY[triage.priority],
     };
-    return bug;
+    return ticket;
   }
 
-  const feature: FeatureTicketInput = {
+  const feature = content as FeatureContent;
+  const ticket: FeatureTicketInput = {
     type: 'Feature',
-    summary: normalized.summary,
-    businessJustification: normalized.intent,
-    acceptanceCriteria: stepsOrActions,
+    summary: feature.summary,
+    businessJustification: feature.businessJustification,
+    acceptanceCriteria: feature.acceptanceCriteria,
     priority: PRIORITY_TO_FEATURE_PRIORITY[triage.priority],
   };
-  return feature;
+  return ticket;
 }

@@ -34,8 +34,9 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    // Gemini reads the recording (video + audio) → NormalizedInput; Claude triages it.
-    const { normalized, triage, needsReview } = await prepareTicketFromVideo(
+    // Gemini reads the recording (video + audio) → NormalizedInput; Claude triages
+    // it, then Claude composes the actual ticket content from evidence + triage.
+    const { normalized, triage, content, needsReview } = await prepareTicketFromVideo(
       { video, text: typeof description === 'string' ? description : undefined },
       ROUTING,
     );
@@ -43,12 +44,12 @@ export async function POST(req: NextRequest) {
     // File the real Jira ticket. Low-confidence results are still auto-filed for
     // now (no review queue exists yet) — `needsReview` is passed through so the
     // UI can flag it.
-    const { issueKey, issueUrl } = await createJiraTicket(toTicketInput(normalized, triage));
+    const { issueKey, issueUrl } = await createJiraTicket(toTicketInput(content, triage));
 
     return NextResponse.json({
       issueKey,
       issueUrl,
-      summary: normalized.summary,
+      summary: content.summary,
       type: triage.type,
       priority: triage.priority,
       labels: triage.labels,

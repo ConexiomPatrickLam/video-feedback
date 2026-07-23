@@ -1,6 +1,6 @@
 /**
- * The contract for the two middle-of-pipeline agents:
- *   video --[normalize]--> NormalizedInput --[triage]--> TriageResult
+ * The contract for the three middle-of-pipeline agents:
+ *   video --[normalize]--> NormalizedInput --[triage]--> TriageResult --[compose]--> ComposedContent
  *
  * normalize's input type is NormalizeVideoInput (agents/normalize-gemini.ts).
  * No logic lives here — just the shared types.
@@ -85,6 +85,24 @@ export interface TriageResult {
   reasoning: string;
 }
 
+// ───────────── Agent 3: compose ─────────────
+
+export interface BugContent {
+  summary: string;
+  stepsToReproduce: string[];
+  expectedBehavior: string;
+  actualBehavior: string;
+  environment?: string;
+}
+
+export interface FeatureContent {
+  summary: string;
+  businessJustification: string;
+  acceptanceCriteria: string[];
+}
+
+export type ComposedContent = BugContent | FeatureContent;
+
 // ───────────── Routing config (triage's allowed choices) ─────────────
 
 export interface ProjectConfig {
@@ -104,6 +122,7 @@ export interface RoutingConfig {
 export interface PrepareTicketResult {
   normalized: NormalizedInput;
   triage: TriageResult;
+  content: ComposedContent;
   /** true when either confidence < 0.6. */
   needsReview: boolean;
 }
