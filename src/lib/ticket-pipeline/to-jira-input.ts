@@ -17,13 +17,19 @@ const PRIORITY_TO_FEATURE_PRIORITY: Record<TriageResult['priority'], NonNullable
   highest: 'High',
 };
 
+// Jira's summary field is capped at 255 chars; guard against an over-long title.
+const MAX_SUMMARY = 255;
+function toSummary(text: string): string {
+  return text.length <= MAX_SUMMARY ? text : `${text.slice(0, MAX_SUMMARY - 1).trimEnd()}…`;
+}
+
 /** Turn the composed ticket content + triage decision into what the Jira client expects. */
 export function toTicketInput(content: ComposedContent, triage: TriageResult): TicketInput {
   if (triage.type === 'bug') {
     const bug = content as BugContent;
     const ticket: BugTicketInput = {
       type: 'Bug',
-      summary: bug.summary,
+      summary: toSummary(bug.summary),
       stepsToReproduce: bug.stepsToReproduce,
       expectedBehavior: bug.expectedBehavior,
       actualBehavior: bug.actualBehavior,
@@ -36,7 +42,7 @@ export function toTicketInput(content: ComposedContent, triage: TriageResult): T
   const feature = content as FeatureContent;
   const ticket: FeatureTicketInput = {
     type: 'Feature',
-    summary: feature.summary,
+    summary: toSummary(feature.summary),
     businessJustification: feature.businessJustification,
     acceptanceCriteria: feature.acceptanceCriteria,
     priority: PRIORITY_TO_FEATURE_PRIORITY[triage.priority],
