@@ -2,8 +2,11 @@
 
 import { useRef, useState } from 'react';
 
+type Status = 'idle' | 'recording' | 'uploading' | 'done' | 'error';
+
 export default function FeedbackRecorder() {
-  const [recording, setRecording] = useState(false);
+  const [status, setStatus] = useState<Status>('idle');
+  const [result, setResult] = useState<string | null>(null);
 
   const streamRef = useRef<MediaStream | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -28,38 +31,51 @@ export default function FeedbackRecorder() {
     mediaRecorder.ondataavailable = (e) => {
       if (e.data.size > 0) chunksRef.current.push(e.data);
     };
-    mediaRecorder.onstop = saveRecordingLocally;
+    mediaRecorder.onstop = uploadRecording;
     mediaRecorderRef.current = mediaRecorder;
 
     // stop automatically if the user ends sharing via the browser's own UI
     stream.getVideoTracks()[0].addEventListener('ended', stopRecording);
 
     mediaRecorder.start();
-    setRecording(true);
+    setResult(null);
+    setStatus('recording');
   }
 
   function stopRecording() {
     mediaRecorderRef.current?.stop();
     streamRef.current?.getTracks().forEach((t) => t.stop());
-    setRecording(false);
   }
 
-  function saveRecordingLocally() {
-    const blob = new Blob(chunksRef.current, { type: 'video/webm' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `feedback-recording-${Date.now()}.webm`;
-    a.click();
-    URL.revokeObjectURL(url);
+  async function uploadRecording() {
+    setStatus('uploading');
+    try {
+      const blob = new Blob(chunksRef.current, { type: 'video/webm' });
+      const formData = new FormData();
+      formData.append('video', blob, `feedback-recording-${Date.now()}.webm`);
+
+      const res = await fetch('/api/process-recording', { method: 'POST', body: formData });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to process recording');
+
+      setResult(`${data.issueKey}: ${data.summary} — ${data.issueUrl}`);
+      setStatus('done');
+    } catch (err) {
+      setResult(`Error: ${(err as Error).message}`);
+      setStatus('error');
+    }
   }
+
+  const recording = status === 'recording';
+  const uploading = status === 'uploading';
 
   return (
     <div className="flex flex-col gap-3 max-w-md">
       {!recording ? (
         <button
           onClick={startRecording}
-          className="rounded-full bg-foreground px-5 py-3 text-background font-medium"
+          disabled={uploading}
+          className="rounded-full bg-foreground px-5 py-3 text-background font-medium disabled:opacity-50"
         >
           Record Feedback
         </button>
@@ -71,6 +87,9 @@ export default function FeedbackRecorder() {
           Stop Recording
         </button>
       )}
+
+      {uploading && <p className="text-sm">Uploading & analyzing recording...</p>}
+      {result && <p className="text-sm">{result}</p>}
     </div>
   );
 }
