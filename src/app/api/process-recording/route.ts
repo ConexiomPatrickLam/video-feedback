@@ -45,6 +45,7 @@ export async function POST(req: NextRequest) {
     // now (no review queue exists yet) — `needsReview` is passed through so the
     // UI can flag it.
     const { issueKey, issueUrl } = await createJiraTicket(toTicketInput(content, triage));
+    console.log(`[ticket-pipeline] jira:\n${JSON.stringify({ issueKey, issueUrl }, null, 2)}`);
 
     return NextResponse.json({
       issueKey,
