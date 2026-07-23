@@ -25,16 +25,19 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 const INSTRUCTIONS = `You are the NORMALIZE agent — a ticket-type-neutral evidence layer.
 
-You are watching a screen recording (video, possibly with audio). Answer only
-"what is TRUE here?". You do NOT decide the ticket type (bug/feature), write any
-ticket title/description, or use bug-specific framing like "steps to reproduce".
-Include something only if it would be true regardless of the eventual ticket type.
+You are given up to two inputs to reconcile: a screen recording (video, possibly
+with audio) and the user's typed note. Consider BOTH — the note says what the user
+means, the recording shows what actually happened; use each to ground the other.
+Answer only "what is TRUE here?". You do NOT decide the ticket type (bug/feature),
+write any ticket title/description, or use bug-specific framing like "steps to
+reproduce". Include something only if it would be true regardless of the eventual
+ticket type.
 
 Attribute every observation to its source:
 - what you SEE in the video → source "frame"; set frameTimestampMs to the time in
   the recording (milliseconds) where it appears
 - what is SPOKEN in the audio → source "transcript"
-- the user's typed note (below) → source "text"
+- what the user wrote in the typed note → source "text"
 
 Never invent errors, actions, URLs, or environment details that aren't in the
 recording, audio, or typed note. Record verbatim standout phrases as quotes and
@@ -99,10 +102,9 @@ export interface NormalizeVideoInput {
 export async function normalizeVideo(input: NormalizeVideoInput): Promise<NormalizedInput> {
   const mimeType = input.mimeType ?? "video/webm";
 
-  const promptParts: string[] = [INSTRUCTIONS];
-  if (input.text) promptParts.push(`User's typed note:\n${input.text}`);
-  if (input.metadata) promptParts.push(`Capture metadata:\n${JSON.stringify(input.metadata, null, 2)}`);
-  const prompt = promptParts.join("\n\n");
+  const contextParts: string[] = [INSTRUCTIONS];
+  if (input.metadata) contextParts.push(`Capture metadata:\n${JSON.stringify(input.metadata, null, 2)}`);
+  const contextText = contextParts.join("\n\n");
 
   let videoPart: Part;
   let uploadedFileName: string | undefined;
@@ -122,15 +124,28 @@ export async function normalizeVideo(input: NormalizeVideoInput): Promise<Normal
     videoPart = createPartFromUri(file.uri!, file.mimeType!);
   }
 
+  // Instructions/metadata, the user's typed note, and the video go in as
+  // distinct parts of one turn — so both the note and the recording are
+  // first-class inputs the model reconciles.
+  const parts: Part[] = [{ text: contextText }];
+  if (input.text) parts.push({ text: `User's typed note (source "text"):\n${input.text}` });
+  parts.push(videoPart);
+
   try {
     const response = await ai.models.generateContent({
       model: GEMINI_MODEL,
-      contents: createUserContent([{ text: prompt }, videoPart]),
+      contents: createUserContent(parts),
       config: { responseMimeType: "application/json", responseSchema: SCHEMA },
     });
 
     if (!response.text) throw new Error("Gemini returned no structured output.");
-    return JSON.parse(response.text) as NormalizedInput;
+    const normalized = JSON.parse(response.text) as NormalizedInput;
+
+    // Pass the capture timestamp through deterministically (factual metadata,
+    // not something the model should infer or echo).
+    if (input.metadata?.timestamp) normalized.capturedAt = input.metadata.timestamp;
+
+    return normalized;
   } finally {
     // Don't leave the recording sitting on Google's servers.
     if (uploadedFileName) await ai.files.delete({ name: uploadedFileName }).catch(() => {});
