@@ -13,6 +13,7 @@ vi.mock("../agents/normalize-gemini", () => ({
 vi.mock("../agents/normalize-text", () => ({ normalizeTextOnly: vi.fn() }));
 vi.mock("../agents/triage", () => ({ triage: vi.fn() }));
 vi.mock("../agents/compose", () => ({ compose: vi.fn() }));
+vi.mock("../sleep", () => ({ sleep: vi.fn().mockResolvedValue(undefined) }));
 const mockNormalizeVideo = vi.mocked(normalizeVideo);
 const mockNormalizeText = vi.mocked(normalizeTextOnly);
 const mockTriage = vi.mocked(triage);
@@ -122,6 +123,66 @@ describe("prepareTicketFromVideo — Gemini quota fallback", () => {
     await expect(
       prepareTicketFromVideo({ video: new Blob(["x"], { type: "video/webm" }) }, ROUTING),
     ).rejects.toThrow(/no typed note/i);
+    expect(mockNormalizeText).not.toHaveBeenCalled();
+  });
+});
+
+describe("prepareTicketFromVideo — Gemini retry before falling back", () => {
+  it("recovers after a transient quota error and does not fall back to text-only", async () => {
+    mockNormalizeVideo.mockRejectedValueOnce({ status: 429 }).mockResolvedValueOnce(normalized(0.9));
+    mockTriage.mockResolvedValue(triageResult(0.9));
+
+    const result = await prepareTicketFromVideo(videoInput(), ROUTING);
+
+    expect(mockNormalizeVideo).toHaveBeenCalledTimes(2);
+    expect(mockNormalizeText).not.toHaveBeenCalled();
+    expect(result.needsReview).toBe(false);
+  });
+
+  it("retries the configured number of times before falling back to text-only", async () => {
+    mockNormalizeVideo.mockRejectedValue({ status: 429 });
+    mockNormalizeText.mockResolvedValue(normalized(0.5));
+    mockTriage.mockResolvedValue(triageResult(0.9));
+    const input = videoInput();
+
+    const result = await prepareTicketFromVideo(input, ROUTING);
+
+    expect(mockNormalizeVideo).toHaveBeenCalledTimes(3); // initial attempt + 2 retries
+    expect(mockNormalizeText).toHaveBeenCalledWith(expect.objectContaining({ text: input.text }));
+    expect(result.needsReview).toBe(true);
+  });
+
+  it("does not retry non-quota errors", async () => {
+    mockNormalizeVideo.mockRejectedValue({ status: 500 });
+
+    await expect(prepareTicketFromVideo(videoInput(), ROUTING)).rejects.toBeDefined();
+    expect(mockNormalizeVideo).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("prepareTicketFromVideo — proactive skip on a substantial typed note", () => {
+  it("skips Gemini entirely when the typed note is long enough on its own", async () => {
+    const input = {
+      video: new Blob(["fake-webm"], { type: "video/webm" }),
+      text: "This is a long, detailed typed note describing the issue in full.",
+    };
+    mockNormalizeText.mockResolvedValue(normalized(0.8));
+    mockTriage.mockResolvedValue(triageResult(0.9));
+
+    const result = await prepareTicketFromVideo(input, ROUTING);
+
+    expect(mockNormalizeVideo).not.toHaveBeenCalled();
+    expect(mockNormalizeText).toHaveBeenCalledWith(expect.objectContaining({ text: input.text }));
+    expect(result.needsReview).toBe(false);
+  });
+
+  it("still calls Gemini when the typed note is short", async () => {
+    mockNormalizeVideo.mockResolvedValue(normalized(0.9));
+    mockTriage.mockResolvedValue(triageResult(0.9));
+
+    await prepareTicketFromVideo(videoInput(), ROUTING); // videoInput()'s text is "note" — short
+
+    expect(mockNormalizeVideo).toHaveBeenCalled();
     expect(mockNormalizeText).not.toHaveBeenCalled();
   });
 });

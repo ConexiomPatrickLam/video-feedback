@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
   prepareTicketFromVideo,
+  normalizeTextOnly,
   triage,
   compose,
   CONFIDENCE_THRESHOLD,
   type RoutingConfig,
-  type NormalizedInput,
 } from '@/lib/ticket-pipeline';
 import { toTicketInput } from '@/lib/ticket-pipeline/to-jira-input';
 import { createJiraTicket, type TicketAttachment } from '@/services/jira-integration';
@@ -84,18 +84,9 @@ function extensionFor(mimeType: string): string {
   return mimeType.split(';')[0].split('/')[1] || 'webm';
 }
 
-/** No video to analyze — skip Gemini, triage + compose directly off the raw text. */
+/** No video to analyze — skip Gemini, normalize from text alone, then triage + compose. */
 async function triageAndComposeTextOnly(text: string, routing: RoutingConfig) {
-  const normalized: NormalizedInput = {
-    summary: text,
-    intent: text,
-    observations: [{ statement: text, source: 'text' }],
-    entities: {},
-    quotes: [],
-    gaps: [],
-    confidence: 1,
-  };
-
+  const normalized = await normalizeTextOnly({ text });
   const triageResult = await triage(normalized, routing);
   const content = await compose(normalized, triageResult);
   const needsReview =
