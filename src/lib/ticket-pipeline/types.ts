@@ -87,12 +87,22 @@ export interface TriageResult {
 
 // ───────────── Agent 3: compose ─────────────
 
+/** Cites a step in stepsToReproduce as evidenced by a specific frame observation,
+ * so the matching client-captured screenshot can be attached to that step. */
+export interface StepScreenshotRef {
+  /** 0-based index into stepsToReproduce. */
+  stepIndex: number;
+  /** Must match an actual "frame" observation's frameTimestampMs — never invented. */
+  frameTimestampMs: number;
+}
+
 export interface BugContent {
   summary: string;
   stepsToReproduce: string[];
   expectedBehavior: string;
   actualBehavior: string;
   environment?: string;
+  stepScreenshots?: StepScreenshotRef[];
 }
 
 export interface FeatureContent {

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { prepareTicketFromVideo, type RoutingConfig } from '@/lib/ticket-pipeline';
+import { prepareTicketFromVideo, type BugContent, type RoutingConfig } from '@/lib/ticket-pipeline';
 import { toTicketInput } from '@/lib/ticket-pipeline/to-jira-input';
+import { resolveStepScreenshots, type CapturedFrame } from '@/lib/ticket-pipeline/screenshots';
 import { createJiraTicket } from '@/services/jira-integration';
 
 // Pipeline runs the Anthropic + Google SDKs — needs the Node runtime, and video
@@ -28,9 +29,19 @@ export async function POST(req: NextRequest) {
   const formData = await req.formData();
   const video = formData.get('video');
   const description = formData.get('description'); // optional typed note
+  const framesField = formData.get('frames'); // optional JSON array of captured screenshots
 
   if (!(video instanceof Blob)) {
     return NextResponse.json({ error: 'No video file provided' }, { status: 400 });
+  }
+
+  let frames: CapturedFrame[] = [];
+  if (typeof framesField === 'string') {
+    try {
+      frames = JSON.parse(framesField);
+    } catch {
+      frames = [];
+    }
   }
 
   try {
@@ -41,10 +52,17 @@ export async function POST(req: NextRequest) {
       ROUTING,
     );
 
+    // Match compose's cited step->frame timestamps to the closest captured
+    // screenshot and upload it, so it can be embedded under that step.
+    const stepScreenshots =
+      triage.type === 'bug'
+        ? await resolveStepScreenshots((content as BugContent).stepScreenshots, frames)
+        : [];
+
     // File the real Jira ticket. Low-confidence results are still auto-filed for
     // now (no review queue exists yet) — `needsReview` is passed through so the
     // UI can flag it.
-    const { issueKey, issueUrl } = await createJiraTicket(toTicketInput(content, triage));
+    const { issueKey, issueUrl } = await createJiraTicket(toTicketInput(content, triage, stepScreenshots));
     console.log(`[ticket-pipeline] jira:\n${JSON.stringify({ issueKey, issueUrl }, null, 2)}`);
 
     return NextResponse.json({

@@ -13,7 +13,15 @@ would read — clear, well-formed prose, not a copy of the raw evidence fields.
 - For features: write "businessJustification" as 1-2 sentences explaining why this
   matters, and "acceptanceCriteria" as a checklist of concrete, testable statements.
 - Only use facts present in the evidence layer — never invent details, error text,
-  or steps that aren't supported by an observation, quote, or entity.`;
+  or steps that aren't supported by an observation, quote, or entity.
+- For bugs: the evidence layer's "observations" array may include entries with
+  source "frame" and a frameTimestampMs — these mark a specific moment in the
+  recording. When a step in "stepsToReproduce" is directly evidenced by one of
+  those frame observations, add an entry to "stepScreenshots" citing that step's
+  0-based index and that exact frameTimestampMs, so the matching screenshot can be
+  attached under that step. Only cite a frameTimestampMs that actually appears on
+  a "frame" observation in the evidence — never invent or approximate one. Omit
+  "stepScreenshots" entirely if no step has direct frame evidence.`;
 
 const BUG_SCHEMA: Anthropic.Tool.InputSchema = {
   type: "object",
@@ -23,6 +31,22 @@ const BUG_SCHEMA: Anthropic.Tool.InputSchema = {
     expectedBehavior: { type: "string" },
     actualBehavior: { type: "string" },
     environment: { type: "string" },
+    stepScreenshots: {
+      type: "array",
+      description:
+        "Steps directly evidenced by a specific frame observation, citing that step's index and the observation's frameTimestampMs.",
+      items: {
+        type: "object",
+        properties: {
+          stepIndex: { type: "number", description: "0-based index into stepsToReproduce." },
+          frameTimestampMs: {
+            type: "number",
+            description: "Must match an actual frame observation's frameTimestampMs from the evidence.",
+          },
+        },
+        required: ["stepIndex", "frameTimestampMs"],
+      },
+    },
   },
   required: ["summary", "stepsToReproduce", "expectedBehavior", "actualBehavior"],
 };

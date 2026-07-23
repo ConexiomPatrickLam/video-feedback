@@ -98,6 +98,34 @@ describe('buildBugDescription', () => {
     expect(mediaSingleNodes(without)).toHaveLength(0);
   });
 
+  it('embeds a screenshot inline under its matching step, not the other steps', () => {
+    const doc = buildBugDescription({
+      ...base,
+      stepScreenshots: [{ stepIndex: 1, url: 'https://example.com/step-1.jpg', alt: 'Sign In click' }],
+    });
+
+    const list = doc.content.find((n) => n.type === 'orderedList');
+    expect(list?.content).toHaveLength(2);
+
+    const [firstStep, secondStep] = list!.content;
+    expect(firstStep.content.some((n) => n.type === 'mediaSingle')).toBe(false);
+
+    const media = secondStep.content.find((n): n is Extract<typeof n, { type: 'mediaSingle' }> => n.type === 'mediaSingle');
+    expect(media?.content[0]).toEqual({
+      type: 'media',
+      attrs: { type: 'external', url: 'https://example.com/step-1.jpg', alt: 'Sign In click' },
+    });
+  });
+
+  it('renders plain steps with no screenshots when stepScreenshots is omitted', () => {
+    const doc = buildBugDescription(base);
+
+    const list = doc.content.find((n) => n.type === 'orderedList');
+    for (const item of list!.content) {
+      expect(item.content.some((n) => n.type === 'mediaSingle')).toBe(false);
+    }
+  });
+
   it('renders related links as a bullet list of hyperlinks only when provided', () => {
     const withLinks = buildBugDescription({
       ...base,

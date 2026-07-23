@@ -1,4 +1,4 @@
-import { ADFDocument, ADFInline, ADFNode, BugTicketInput, EmbeddedImage, FeatureTicketInput, TicketLink } from './types';
+import { ADFDocument, ADFInline, ADFNode, BugTicketInput, EmbeddedImage, FeatureTicketInput, StepScreenshot, TicketLink } from './types';
 
 function paragraph(text: string): ADFNode {
   return { type: 'paragraph', content: [{ type: 'text', text }] };
@@ -8,10 +8,19 @@ function heading(text: string, level = 3): ADFNode {
   return { type: 'heading', attrs: { level }, content: [{ type: 'text', text }] };
 }
 
-function orderedList(items: string[]): ADFNode {
+/** Builds the "Steps to Reproduce" list, embedding a screenshot inline under
+ * its matching step when one was resolved. */
+function orderedListWithScreenshots(items: string[], screenshots?: StepScreenshot[]): ADFNode {
+  const byStepIndex = new Map((screenshots ?? []).map((s) => [s.stepIndex, s]));
+
   return {
     type: 'orderedList',
-    content: items.map((item) => ({ type: 'listItem', content: [paragraph(item)] })),
+    content: items.map((item, i) => {
+      const shot = byStepIndex.get(i);
+      const stepContent: ADFNode[] = [paragraph(item)];
+      if (shot) stepContent.push(externalImage({ url: shot.url, alt: shot.alt }));
+      return { type: 'listItem', content: stepContent };
+    }),
   };
 }
 
@@ -59,7 +68,10 @@ export function buildBugDescription(input: BugTicketInput): ADFDocument {
   const content: ADFNode[] = [];
 
   if (input.stepsToReproduce.length > 0) {
-    content.push(heading('Steps to Reproduce'), orderedList(input.stepsToReproduce));
+    content.push(
+      heading('Steps to Reproduce'),
+      orderedListWithScreenshots(input.stepsToReproduce, input.stepScreenshots),
+    );
   }
 
   content.push(heading('Expected Behavior'), paragraph(input.expectedBehavior));

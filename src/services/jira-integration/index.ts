@@ -8,6 +8,7 @@ export type {
   TicketAttachment,
   TicketLink,
   EmbeddedImage,
+  StepScreenshot,
   TicketInput,
   JiraTicketResult,
 } from './types';

@@ -14,6 +14,14 @@ export interface EmbeddedImage {
   alt?: string;
 }
 
+/** A screenshot embedded inline under a specific step in "Steps to Reproduce". */
+export interface StepScreenshot {
+  /** 0-based index into stepsToReproduce. */
+  stepIndex: number;
+  url: string;
+  alt?: string;
+}
+
 interface BaseTicketInput {
   summary: string;
   attachments?: TicketAttachment[];
@@ -28,6 +36,8 @@ export interface BugTicketInput extends BaseTicketInput {
   actualBehavior: string;
   environment?: string;
   severity?: 'Low' | 'Medium' | 'High' | 'Critical';
+  /** Screenshots to embed inline under the matching step, by index. */
+  stepScreenshots?: StepScreenshot[];
 }
 
 export interface FeatureTicketInput extends BaseTicketInput {

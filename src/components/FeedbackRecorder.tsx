@@ -4,6 +4,10 @@ import { useRef, useState } from 'react';
 
 type Status = 'idle' | 'recording' | 'uploading' | 'done' | 'error';
 
+const FRAME_INTERVAL_MS = 2000; // grab a frame every 2s
+const MAX_FRAMES = 8;           // cap payload size
+const FRAME_WIDTH = 800;        // downscale so frames stay small
+
 export default function FeedbackRecorder() {
   const [status, setStatus] = useState<Status>('idle');
   const [result, setResult] = useState<string | null>(null);
@@ -15,6 +19,14 @@ export default function FeedbackRecorder() {
   // Mirror the note in a ref: uploadRecording is bound to mediaRecorder.onstop at
   // record-start, so reading `note` from state there would be stale.
   const noteRef = useRef('');
+
+  // Hidden <video>+<canvas> mirror the same live stream MediaRecorder is
+  // capturing, so we can grab periodic screenshots alongside the recording.
+  const videoElRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const framesRef = useRef<{ timestampMs: number; dataUrl: string }[]>([]);
+  const frameIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const recordingStartRef = useRef(0);
 
   async function startRecording() {
     let stream: MediaStream;
@@ -30,6 +42,14 @@ export default function FeedbackRecorder() {
 
     streamRef.current = stream;
     chunksRef.current = [];
+    framesRef.current = [];
+
+    const videoEl = videoElRef.current!;
+    videoEl.srcObject = stream;
+    await videoEl.play();
+
+    recordingStartRef.current = Date.now();
+    frameIntervalRef.current = setInterval(captureFrame, FRAME_INTERVAL_MS);
 
     const mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp9' });
     mediaRecorder.ondataavailable = (e) => {
@@ -46,7 +66,27 @@ export default function FeedbackRecorder() {
     setStatus('recording');
   }
 
+  function captureFrame() {
+    if (framesRef.current.length >= MAX_FRAMES) return;
+
+    const videoEl = videoElRef.current!;
+    const canvas = canvasRef.current!;
+    if (!videoEl.videoWidth) return;
+
+    const scale = FRAME_WIDTH / videoEl.videoWidth;
+    canvas.width = FRAME_WIDTH;
+    canvas.height = videoEl.videoHeight * scale;
+
+    const ctx = canvas.getContext('2d')!;
+    ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
+    framesRef.current.push({
+      timestampMs: Date.now() - recordingStartRef.current,
+      dataUrl: canvas.toDataURL('image/jpeg', 0.6),
+    });
+  }
+
   function stopRecording() {
+    if (frameIntervalRef.current) clearInterval(frameIntervalRef.current);
     mediaRecorderRef.current?.stop();
     streamRef.current?.getTracks().forEach((t) => t.stop());
   }
@@ -60,6 +100,10 @@ export default function FeedbackRecorder() {
 
       const trimmedNote = noteRef.current.trim();
       if (trimmedNote) formData.append('description', trimmedNote);
+
+      if (framesRef.current.length > 0) {
+        formData.append('frames', JSON.stringify(framesRef.current));
+      }
 
       const res = await fetch('/api/process-recording', { method: 'POST', body: formData });
       const data = await res.json();
@@ -78,6 +122,9 @@ export default function FeedbackRecorder() {
 
   return (
     <div className="flex flex-col gap-3 max-w-md">
+      <video ref={videoElRef} muted className="hidden" />
+      <canvas ref={canvasRef} className="hidden" />
+
       <textarea
         value={note}
         onChange={(e) => {

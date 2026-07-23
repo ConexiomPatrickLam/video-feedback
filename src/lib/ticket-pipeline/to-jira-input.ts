@@ -1,4 +1,4 @@
-import type { BugTicketInput, FeatureTicketInput, TicketInput } from '@/services/jira-integration';
+import type { BugTicketInput, FeatureTicketInput, StepScreenshot, TicketInput } from '@/services/jira-integration';
 import type { BugContent, ComposedContent, FeatureContent, TriageResult } from './types';
 
 const PRIORITY_TO_SEVERITY: Record<TriageResult['priority'], NonNullable<BugTicketInput['severity']>> = {
@@ -23,8 +23,14 @@ function toSummary(text: string): string {
   return text.length <= MAX_SUMMARY ? text : `${text.slice(0, MAX_SUMMARY - 1).trimEnd()}…`;
 }
 
-/** Turn the composed ticket content + triage decision into what the Jira client expects. */
-export function toTicketInput(content: ComposedContent, triage: TriageResult): TicketInput {
+/** Turn the composed ticket content + triage decision into what the Jira client
+ * expects. `stepScreenshots` are already-resolved (uploaded, real URLs) — see
+ * screenshots.ts for matching compose's raw frame citations to a URL. */
+export function toTicketInput(
+  content: ComposedContent,
+  triage: TriageResult,
+  stepScreenshots: StepScreenshot[] = [],
+): TicketInput {
   if (triage.type === 'bug') {
     const bug = content as BugContent;
     const ticket: BugTicketInput = {
@@ -35,6 +41,7 @@ export function toTicketInput(content: ComposedContent, triage: TriageResult): T
       actualBehavior: bug.actualBehavior,
       environment: bug.environment,
       severity: PRIORITY_TO_SEVERITY[triage.priority],
+      stepScreenshots: stepScreenshots.length > 0 ? stepScreenshots : undefined,
     };
     return ticket;
   }
