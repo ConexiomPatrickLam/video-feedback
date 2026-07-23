@@ -39,6 +39,12 @@ Attribute every observation to its source:
 - what is SPOKEN in the audio → source "transcript"
 - what the user wrote in the typed note → source "text"
 
+The recording may also show an on-screen notes/feedback textbox that the user
+typed into while capturing — if visible in any frame, read its contents as a
+"frame" observation and treat it as the strongest signal for "intent": prefer
+what the user typed there over what you infer from actions alone if the two
+seem to disagree.
+
 Never invent errors, actions, URLs, or environment details that aren't in the
 recording, audio, or typed note. Record verbatim standout phrases as quotes and
 note anything missing or unclear as gaps.`;
