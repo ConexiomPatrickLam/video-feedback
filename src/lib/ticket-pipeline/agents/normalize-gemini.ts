@@ -91,6 +91,19 @@ const SCHEMA: Schema = {
   required: ["summary", "intent", "observations", "entities", "quotes", "gaps", "confidence"],
 };
 
+/** True when a Gemini call failed because the quota/rate limit was exhausted (HTTP 429). */
+export function isGeminiQuotaError(err: unknown): boolean {
+  const e = err as { status?: number | string; code?: number; message?: string } | undefined;
+  const msg = String(e?.message ?? "");
+  return (
+    e?.status === 429 ||
+    e?.code === 429 ||
+    e?.status === "RESOURCE_EXHAUSTED" ||
+    msg.includes("RESOURCE_EXHAUSTED") ||
+    msg.includes('"code":429')
+  );
+}
+
 export interface NormalizeVideoInput {
   video: Blob;
   /** Defaults to "video/webm" (what the feedback widget records). */

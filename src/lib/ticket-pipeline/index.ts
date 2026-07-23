@@ -5,6 +5,10 @@ export {
   GEMINI_MODEL,
   type NormalizeVideoInput,
 } from "./agents/normalize-gemini";
+export {
+  normalizeTextOnly,
+  type NormalizeTextInput,
+} from "./agents/normalize-text";
 export { triage } from "./agents/triage";
 export { compose } from "./agents/compose";
 export { prepareTicketFromVideo, CONFIDENCE_THRESHOLD } from "./pipeline";

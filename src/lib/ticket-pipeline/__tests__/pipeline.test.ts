@@ -1,14 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { normalizeVideo } from "../agents/normalize-gemini";
+import { normalizeTextOnly } from "../agents/normalize-text";
 import { triage } from "../agents/triage";
 import { compose } from "../agents/compose";
 import { prepareTicketFromVideo } from "../pipeline";
 import type { BugContent, NormalizedInput, RoutingConfig, TriageResult } from "../types";
 
-vi.mock("../agents/normalize-gemini", () => ({ normalizeVideo: vi.fn() }));
+vi.mock("../agents/normalize-gemini", () => ({
+  normalizeVideo: vi.fn(),
+  isGeminiQuotaError: (err: { status?: number }) => err?.status === 429,
+}));
+vi.mock("../agents/normalize-text", () => ({ normalizeTextOnly: vi.fn() }));
 vi.mock("../agents/triage", () => ({ triage: vi.fn() }));
 vi.mock("../agents/compose", () => ({ compose: vi.fn() }));
 const mockNormalizeVideo = vi.mocked(normalizeVideo);
+const mockNormalizeText = vi.mocked(normalizeTextOnly);
 const mockTriage = vi.mocked(triage);
 const mockCompose = vi.mocked(compose);
 
@@ -47,6 +53,7 @@ function videoInput() {
 
 beforeEach(() => {
   mockNormalizeVideo.mockReset();
+  mockNormalizeText.mockReset();
   mockTriage.mockReset();
   mockCompose.mockReset();
   mockCompose.mockResolvedValue(composedContent());
@@ -85,5 +92,36 @@ describe("prepareTicketFromVideo", () => {
     mockTriage.mockResolvedValue(triageResult(0.3));
     const result = await prepareTicketFromVideo(videoInput(), ROUTING);
     expect(result.needsReview).toBe(true);
+  });
+});
+
+describe("prepareTicketFromVideo — Gemini quota fallback", () => {
+  it("falls back to Claude text-only normalize on a Gemini 429", async () => {
+    mockNormalizeVideo.mockRejectedValue({ status: 429 });
+    mockNormalizeText.mockResolvedValue(normalized(0.5));
+    mockTriage.mockResolvedValue(triageResult(0.9));
+    const input = videoInput();
+
+    const result = await prepareTicketFromVideo(input, ROUTING);
+
+    expect(mockNormalizeText).toHaveBeenCalledWith(expect.objectContaining({ text: input.text }));
+    expect(mockTriage).toHaveBeenCalledOnce();
+    expect(result.needsReview).toBe(true); // text-only confidence 0.5 < 0.6
+  });
+
+  it("rethrows non-quota Gemini errors without falling back", async () => {
+    mockNormalizeVideo.mockRejectedValue({ status: 500 });
+
+    await expect(prepareTicketFromVideo(videoInput(), ROUTING)).rejects.toBeDefined();
+    expect(mockNormalizeText).not.toHaveBeenCalled();
+  });
+
+  it("throws instead of filing a junk ticket when quota is hit and there is no note", async () => {
+    mockNormalizeVideo.mockRejectedValue({ status: 429 });
+
+    await expect(
+      prepareTicketFromVideo({ video: new Blob(["x"], { type: "video/webm" }) }, ROUTING),
+    ).rejects.toThrow(/no typed note/i);
+    expect(mockNormalizeText).not.toHaveBeenCalled();
   });
 });
