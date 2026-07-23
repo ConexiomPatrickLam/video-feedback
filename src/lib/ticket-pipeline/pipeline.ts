@@ -3,7 +3,7 @@ import { triage } from "./agents/triage";
 import type { PrepareTicketResult, RoutingConfig } from "./types";
 
 /** Below this, the ticket is sent to the human review queue instead of auto-filed. */
-const CONFIDENCE_THRESHOLD = 0.6;
+export const CONFIDENCE_THRESHOLD = 0.6;
 
 /**
  * Log DERIVED output only (never the raw capture / base64 frames), so we can see

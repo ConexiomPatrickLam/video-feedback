@@ -6,4 +6,4 @@ export {
   type NormalizeVideoInput,
 } from "./agents/normalize-gemini";
 export { triage } from "./agents/triage";
-export { prepareTicketFromVideo } from "./pipeline";
+export { prepareTicketFromVideo, CONFIDENCE_THRESHOLD } from "./pipeline";
