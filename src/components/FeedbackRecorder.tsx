@@ -13,15 +13,21 @@ export default function FeedbackRecorder() {
   const [result, setResult] = useState<string | null>(null);
   const [note, setNote] = useState('');
 
-  const streamRef = useRef<MediaStream | null>(null);
+  // Screen share (video) and mic (voice narration) are captured separately,
+  // then merged into one stream for MediaRecorder — kept as separate refs so
+  // each can be stopped independently and the mic can fail without blocking
+  // the recording.
+  const displayStreamRef = useRef<MediaStream | null>(null);
+  const micStreamRef = useRef<MediaStream | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   // Mirror the note in a ref: uploadRecording is bound to mediaRecorder.onstop at
   // record-start, so reading `note` from state there would be stale.
   const noteRef = useRef('');
 
-  // Hidden <video>+<canvas> mirror the same live stream MediaRecorder is
-  // capturing, so we can grab periodic screenshots alongside the recording.
+  // Hidden <video>+<canvas> mirror the screen-share stream (video only — no
+  // need for the mic track here), so we can grab periodic screenshots
+  // alongside the recording.
   const videoElRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const framesRef = useRef<{ timestampMs: number; dataUrl: string }[]>([]);
@@ -29,9 +35,9 @@ export default function FeedbackRecorder() {
   const recordingStartRef = useRef(0);
 
   async function startRecording() {
-    let stream: MediaStream;
+    let displayStream: MediaStream;
     try {
-      stream = await navigator.mediaDevices.getDisplayMedia({
+      displayStream = await navigator.mediaDevices.getDisplayMedia({
         video: { frameRate: 15 },
         audio: false,
       });
@@ -40,18 +46,33 @@ export default function FeedbackRecorder() {
       return;
     }
 
-    streamRef.current = stream;
+    // Voice narration is optional — if the mic prompt is denied or unavailable,
+    // fall back to a video-only recording rather than blocking the flow.
+    let micStream: MediaStream | null = null;
+    try {
+      micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch {
+      micStream = null;
+    }
+
+    displayStreamRef.current = displayStream;
+    micStreamRef.current = micStream;
     chunksRef.current = [];
     framesRef.current = [];
 
     const videoEl = videoElRef.current!;
-    videoEl.srcObject = stream;
+    videoEl.srcObject = displayStream;
     await videoEl.play();
 
     recordingStartRef.current = Date.now();
     frameIntervalRef.current = setInterval(captureFrame, FRAME_INTERVAL_MS);
 
-    const mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp9' });
+    const recordingStream = micStream
+      ? new MediaStream([...displayStream.getVideoTracks(), ...micStream.getAudioTracks()])
+      : displayStream;
+    const mimeType = micStream ? 'video/webm;codecs=vp9,opus' : 'video/webm;codecs=vp9';
+
+    const mediaRecorder = new MediaRecorder(recordingStream, { mimeType });
     mediaRecorder.ondataavailable = (e) => {
       if (e.data.size > 0) chunksRef.current.push(e.data);
     };
@@ -59,7 +80,7 @@ export default function FeedbackRecorder() {
     mediaRecorderRef.current = mediaRecorder;
 
     // stop automatically if the user ends sharing via the browser's own UI
-    stream.getVideoTracks()[0].addEventListener('ended', stopRecording);
+    displayStream.getVideoTracks()[0].addEventListener('ended', stopRecording);
 
     mediaRecorder.start();
     setResult(null);
@@ -88,7 +109,8 @@ export default function FeedbackRecorder() {
   function stopRecording() {
     if (frameIntervalRef.current) clearInterval(frameIntervalRef.current);
     mediaRecorderRef.current?.stop();
-    streamRef.current?.getTracks().forEach((t) => t.stop());
+    displayStreamRef.current?.getTracks().forEach((t) => t.stop());
+    micStreamRef.current?.getTracks().forEach((t) => t.stop());
   }
 
   async function uploadRecording() {
@@ -133,7 +155,7 @@ export default function FeedbackRecorder() {
         }}
         disabled={uploading}
         rows={3}
-        placeholder="Optional: describe what went wrong or what you'd like changed…"
+        placeholder="Optional: type a note, or just narrate out loud while recording — your voice is picked up automatically…"
         className="rounded-lg border border-black/15 dark:border-white/20 bg-transparent px-3 py-2 text-sm resize-y disabled:opacity-50"
       />
 
