@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prepareTicketFromVideo, type BugContent, type RoutingConfig } from '@/lib/ticket-pipeline';
 import { toTicketInput } from '@/lib/ticket-pipeline/to-jira-input';
 import { resolveStepScreenshots, type CapturedFrame } from '@/lib/ticket-pipeline/screenshots';
-import { createJiraTicket } from '@/services/jira-integration';
+import { createJiraTicket, type TicketAttachment } from '@/services/jira-integration';
 
 // Pipeline runs the Anthropic + Google SDKs — needs the Node runtime, and video
 // analysis can take a while, so give the route room on Vercel.
@@ -62,8 +62,21 @@ export async function POST(req: NextRequest) {
     // File the real Jira ticket. Low-confidence results are still auto-filed for
     // now (no review queue exists yet) — `needsReview` is passed through so the
     // UI can flag it.
-    const { issueKey, issueUrl } = await createJiraTicket(toTicketInput(content, triage, stepScreenshots));
-    console.log(`[ticket-pipeline] jira:\n${JSON.stringify({ issueKey, issueUrl }, null, 2)}`);
+    // Attach the full recording so reviewers can watch it (separate from the
+    // inline step screenshots). Attachment failures are captured per-file and
+    // don't fail an otherwise-valid ticket.
+    const attachments: TicketAttachment[] = [
+      {
+        filename: `recording.${extensionFor(video.type)}`,
+        contentType: video.type || 'video/webm',
+        data: Buffer.from(await video.arrayBuffer()),
+      },
+    ];
+    const { issueKey, issueUrl, attachmentResults } = await createJiraTicket({
+      ...toTicketInput(content, triage, stepScreenshots),
+      attachments,
+    });
+    console.log(`[ticket-pipeline] jira:\n${JSON.stringify({ issueKey, issueUrl, attachmentResults }, null, 2)}`);
 
     return NextResponse.json({
       issueKey,
@@ -81,4 +94,8 @@ export async function POST(req: NextRequest) {
     console.error(err);
     return NextResponse.json({ error: (err as Error).message }, { status: 500 });
   }
+}
+
+function extensionFor(mimeType: string): string {
+  return mimeType.split(';')[0].split('/')[1] || 'webm';
 }
