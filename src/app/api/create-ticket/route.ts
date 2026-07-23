@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
+import { createJiraTicket, BugTicketInput } from '@/services/jira-integration';
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -11,8 +12,21 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'No description or frames provided' }, { status: 400 });
     }
 
-    const ticket = await draftTicketWithClaude(description, frames ?? []);
-    const { issueKey, issueUrl } = await createJiraIssue(ticket);
+    const draft = await draftTicketWithClaude(description, frames ?? []);
+    const bugInput: BugTicketInput = {
+      type: 'Bug',
+      summary: draft.summary,
+      stepsToReproduce: [],
+      expectedBehavior: 'N/A — inferred from a recorded session; see actual behavior below.',
+      actualBehavior: draft.description,
+      attachments: (frames ?? []).map((dataUrl: string, i: number) => ({
+        filename: `frame-${i + 1}.jpg`,
+        contentType: 'image/jpeg',
+        data: dataUrl.split(',')[1], // strip "data:image/jpeg;base64,"
+      })),
+    };
+
+    const { issueKey, issueUrl } = await createJiraTicket(bugInput);
 
     return NextResponse.json({ issueKey, issueUrl });
   } catch (err) {
@@ -55,42 +69,4 @@ async function draftTicketWithClaude(description: string, frames: string[]) {
 
   const text = message.content.find((b) => b.type === 'text')?.text ?? '{}';
   return JSON.parse(text);
-}
-
-async function createJiraIssue(ticket: { summary: string; description: string; issueType: string }) {
-  const baseUrl = process.env.JIRA_BASE_URL!;
-  const auth = Buffer.from(`${process.env.JIRA_EMAIL}:${process.env.JIRA_API_TOKEN}`).toString('base64');
-
-  const res = await fetch(`${baseUrl}/rest/api/3/issue`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Basic ${auth}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      fields: {
-        project: { key: process.env.JIRA_PROJECT_KEY },
-        summary: ticket.summary,
-        issuetype: { name: ticket.issueType || 'Bug' },
-        description: {
-          type: 'doc',
-          version: 1,
-          content: [
-            {
-              type: 'paragraph',
-              content: [{ type: 'text', text: ticket.description }],
-            },
-          ],
-        },
-      },
-    }),
-  });
-
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`Jira API error: ${res.status} ${body}`);
-  }
-
-  const data = await res.json();
-  return { issueKey: data.key, issueUrl: `${baseUrl}/browse/${data.key}` };
 }
