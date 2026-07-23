@@ -59,6 +59,8 @@ export interface NormalizedInput {
   gaps: string[];
   /** 0-1. */
   confidence: number;
+  /** ISO timestamp of the capture, passed through from metadata (not model-generated). */
+  capturedAt?: string;
 }
 
 // ───────────── Agent 2: triage ─────────────

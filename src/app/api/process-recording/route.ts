@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prepareTicketFromVideo, type RoutingConfig } from '@/lib/ticket-pipeline';
+import { toTicketInput } from '@/lib/ticket-pipeline/to-jira-input';
+import { createJiraTicket } from '@/services/jira-integration';
 
 // Pipeline runs the Anthropic + Google SDKs — needs the Node runtime, and video
 // analysis can take a while, so give the route room on Vercel.
@@ -38,11 +40,14 @@ export async function POST(req: NextRequest) {
       ROUTING,
     );
 
-    // TODO: hand `normalized` to the content generator to draft the final ticket
-    // body, then file it via the Jira REST API. Jira creation is still mocked.
+    // File the real Jira ticket. Low-confidence results are still auto-filed for
+    // now (no review queue exists yet) — `needsReview` is passed through so the
+    // UI can flag it.
+    const { issueKey, issueUrl } = await createJiraTicket(toTicketInput(normalized, triage));
+
     return NextResponse.json({
-      issueKey: 'MOCK-123',
-      issueUrl: 'https://example.atlassian.net/browse/MOCK-123',
+      issueKey,
+      issueUrl,
       summary: normalized.summary,
       type: triage.type,
       priority: triage.priority,

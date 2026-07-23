@@ -7,10 +7,14 @@ type Status = 'idle' | 'recording' | 'uploading' | 'done' | 'error';
 export default function FeedbackRecorder() {
   const [status, setStatus] = useState<Status>('idle');
   const [result, setResult] = useState<string | null>(null);
+  const [note, setNote] = useState('');
 
   const streamRef = useRef<MediaStream | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+  // Mirror the note in a ref: uploadRecording is bound to mediaRecorder.onstop at
+  // record-start, so reading `note` from state there would be stale.
+  const noteRef = useRef('');
 
   async function startRecording() {
     let stream: MediaStream;
@@ -54,6 +58,9 @@ export default function FeedbackRecorder() {
       const formData = new FormData();
       formData.append('video', blob, `feedback-recording-${Date.now()}.webm`);
 
+      const trimmedNote = noteRef.current.trim();
+      if (trimmedNote) formData.append('description', trimmedNote);
+
       const res = await fetch('/api/process-recording', { method: 'POST', body: formData });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to process recording');
@@ -71,6 +78,18 @@ export default function FeedbackRecorder() {
 
   return (
     <div className="flex flex-col gap-3 max-w-md">
+      <textarea
+        value={note}
+        onChange={(e) => {
+          setNote(e.target.value);
+          noteRef.current = e.target.value;
+        }}
+        disabled={uploading}
+        rows={3}
+        placeholder="Optional: describe what went wrong or what you'd like changed…"
+        className="rounded-lg border border-black/15 dark:border-white/20 bg-transparent px-3 py-2 text-sm resize-y disabled:opacity-50"
+      />
+
       {!recording ? (
         <button
           onClick={startRecording}
