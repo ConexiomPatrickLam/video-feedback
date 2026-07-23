@@ -2,11 +2,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import {
   prepareTicketFromVideo,
   triage,
+  compose,
   CONFIDENCE_THRESHOLD,
   type RoutingConfig,
   type NormalizedInput,
 } from '@/lib/ticket-pipeline';
-import { createJiraTicket, type TicketInput } from '@/services/jira-integration';
+import { toTicketInput } from '@/lib/ticket-pipeline/to-jira-input';
+import { createJiraTicket, type TicketAttachment } from '@/services/jira-integration';
 
 // Pipeline runs the Anthropic + Google SDKs — needs the Node runtime, and video
 // analysis can take a while, so give the route room on Vercel.
@@ -31,9 +33,8 @@ const ROUTING: RoutingConfig = {
 
 /**
  * External intake: a caller submits a screen recording and/or a text note,
- * which gets normalized + triaged, then filed in Jira with placeholder ticket
- * content (real ticket-body drafting is the content-generation agent's job,
- * not built yet).
+ * which gets normalized, triaged, and composed into real ticket content, then
+ * filed in Jira (with the recording attached, when one was submitted).
  */
 export async function POST(req: NextRequest) {
   const formData = await req.formData();
@@ -48,11 +49,11 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const { normalized, triage: triageResult, needsReview } = hasVideo
+    const { triage: triageResult, content, needsReview } = hasVideo
       ? await prepareTicketFromVideo({ video: video as Blob, text }, ROUTING)
-      : await triageTextOnly(text!, ROUTING);
+      : await triageAndComposeTextOnly(text!, ROUTING);
 
-    const attachments = hasVideo
+    const attachments: TicketAttachment[] | undefined = hasVideo
       ? [
           {
             filename: `recording.${extensionFor((video as Blob).type)}`,
@@ -62,27 +63,17 @@ export async function POST(req: NextRequest) {
         ]
       : undefined;
 
-    const ticketInput: TicketInput =
-      triageResult.type === 'bug'
-        ? {
-            type: 'Bug',
-            summary: normalized.summary,
-            stepsToReproduce: [],
-            expectedBehavior: '',
-            actualBehavior: text ?? 'See attached recording.',
-            attachments,
-          }
-        : {
-            type: 'Feature',
-            summary: normalized.summary,
-            businessJustification: text ?? 'See attached recording.',
-            acceptanceCriteria: [],
-            attachments,
-          };
-
+    const ticketInput = { ...toTicketInput(content, triageResult), attachments };
     const { issueKey, issueUrl, attachmentResults } = await createJiraTicket(ticketInput);
 
-    return NextResponse.json({ issueKey, issueUrl, attachmentResults, needsReview, triage: triageResult });
+    return NextResponse.json({
+      issueKey,
+      issueUrl,
+      attachmentResults,
+      needsReview,
+      triage: triageResult,
+      summary: content.summary,
+    });
   } catch (err) {
     console.error(err);
     return NextResponse.json({ error: (err as Error).message }, { status: 500 });
@@ -93,8 +84,8 @@ function extensionFor(mimeType: string): string {
   return mimeType.split(';')[0].split('/')[1] || 'webm';
 }
 
-/** No video to analyze — skip Gemini and hand the raw text straight to triage. */
-async function triageTextOnly(text: string, routing: RoutingConfig) {
+/** No video to analyze — skip Gemini, triage + compose directly off the raw text. */
+async function triageAndComposeTextOnly(text: string, routing: RoutingConfig) {
   const normalized: NormalizedInput = {
     summary: text,
     intent: text,
@@ -106,8 +97,9 @@ async function triageTextOnly(text: string, routing: RoutingConfig) {
   };
 
   const triageResult = await triage(normalized, routing);
+  const content = await compose(normalized, triageResult);
   const needsReview =
     normalized.confidence < CONFIDENCE_THRESHOLD || triageResult.confidence < CONFIDENCE_THRESHOLD;
 
-  return { normalized, triage: triageResult, needsReview };
+  return { normalized, triage: triageResult, content, needsReview };
 }
