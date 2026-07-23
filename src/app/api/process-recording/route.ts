@@ -1,55 +1,56 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { GoogleGenAI, createPartFromUri, FileState } from '@google/genai';
+import { prepareTicketFromVideo, type RoutingConfig } from '@/lib/ticket-pipeline';
 
-// Video processing + polling can take a while; give the route room on Vercel.
+// Pipeline runs the Anthropic + Google SDKs — needs the Node runtime, and video
+// analysis can take a while, so give the route room on Vercel.
+export const runtime = 'nodejs';
 export const maxDuration = 60;
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const PROJECT_KEY = process.env.JIRA_PROJECT_KEY ?? 'FEEDBACK';
 
-// TODO: Jira ticket creation is still mocked below — see
-// src/app/api/create-ticket/route.ts for a draft REST-API implementation
-// once Jira credentials are configured.
+// What triage is allowed to route to. Swap for the real Jira project(s)/issue
+// types once they're known.
+const ROUTING: RoutingConfig = {
+  projects: [
+    {
+      key: PROJECT_KEY,
+      name: 'Feedback',
+      description: 'User-reported feedback captured via the screen-recording widget.',
+      issueTypes: ['Bug', 'Task'],
+    },
+  ],
+  defaultProjectKey: PROJECT_KEY,
+};
+
 export async function POST(req: NextRequest) {
   const formData = await req.formData();
   const video = formData.get('video');
+  const description = formData.get('description'); // optional typed note
 
   if (!(video instanceof Blob)) {
     return NextResponse.json({ error: 'No video file provided' }, { status: 400 });
   }
 
   try {
-    let file = await ai.files.upload({
-      file: video,
-      config: { mimeType: 'video/webm' },
-    });
+    // Gemini reads the recording (video + audio) → NormalizedInput; Claude triages it.
+    const { normalized, triage, needsReview } = await prepareTicketFromVideo(
+      { video, text: typeof description === 'string' ? description : undefined },
+      ROUTING,
+    );
 
-    for (let attempts = 0; file.state === FileState.PROCESSING && attempts < 20; attempts++) {
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-      file = await ai.files.get({ name: file.name! });
-    }
-
-    if (file.state !== FileState.ACTIVE) {
-      throw new Error(`Video processing did not complete (state: ${file.state})`);
-    }
-
-    const response = await ai.models.generateContent({
-      model: 'gemini-flash-latest',
-      contents: [
-        createPartFromUri(file.uri!, file.mimeType!),
-        'A user recorded a screen capture of our web portal while reporting feedback or a bug. ' +
-          'Watch the video and draft a Jira ticket describing what happened. ' +
-          'Respond with ONLY a JSON object, no markdown fences, in this exact shape:\n' +
-          '{"summary": "short title", "description": "detailed description including steps to reproduce inferred from the video", "issueType": "Bug" or "Task"}',
-      ],
-    });
-
-    const ticket = JSON.parse(response.text ?? '{}');
-
+    // TODO: hand `normalized` to the content generator to draft the final ticket
+    // body, then file it via the Jira REST API. Jira creation is still mocked.
     return NextResponse.json({
       issueKey: 'MOCK-123',
       issueUrl: 'https://example.atlassian.net/browse/MOCK-123',
-      summary: ticket.summary,
-      description: ticket.description,
+      summary: normalized.summary,
+      type: triage.type,
+      priority: triage.priority,
+      labels: triage.labels,
+      destination: triage.destination,
+      reasoning: triage.reasoning,
+      needsReview,
+      normalized,
     });
   } catch (err) {
     console.error(err);
