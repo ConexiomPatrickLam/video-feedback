@@ -1,10 +1,24 @@
 import { put } from '@vercel/blob';
 import type { StepScreenshot } from '@/services/jira-integration';
-import type { StepScreenshotRef } from './types';
+import type { NormalizedInput, StepScreenshotRef } from './types';
 
 export interface CapturedFrame {
   timestampMs: number;
   dataUrl: string;
+}
+
+/**
+ * Compose citing stepScreenshots is best-effort — it may see real frame
+ * evidence and still not cite it. When that happens, fall back to attaching
+ * whatever frame evidence Gemini *did* report to the first step, so a ticket
+ * doesn't ship with zero visual evidence whenever frame evidence exists.
+ */
+export function fallbackStepScreenshotRefs(normalized: NormalizedInput): StepScreenshotRef[] | undefined {
+  const frameObservation = normalized.observations.find(
+    (o) => o.source === 'frame' && o.frameTimestampMs !== undefined,
+  );
+  if (!frameObservation || frameObservation.frameTimestampMs === undefined) return undefined;
+  return [{ stepIndex: 0, frameTimestampMs: frameObservation.frameTimestampMs }];
 }
 
 function closestFrame(targetMs: number, frames: CapturedFrame[]): CapturedFrame | undefined {

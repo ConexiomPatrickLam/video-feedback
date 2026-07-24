@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prepareTicketFromVideo, type BugContent, type RoutingConfig } from '@/lib/ticket-pipeline';
 import { toTicketInput } from '@/lib/ticket-pipeline/to-jira-input';
-import { resolveStepScreenshots, type CapturedFrame } from '@/lib/ticket-pipeline/screenshots';
+import {
+  fallbackStepScreenshotRefs,
+  resolveStepScreenshots,
+  type CapturedFrame,
+} from '@/lib/ticket-pipeline/screenshots';
 import { createJiraTicket, type TicketAttachment } from '@/services/jira-integration';
 
 // Pipeline runs the Anthropic + Google SDKs — needs the Node runtime, and video
@@ -53,11 +57,21 @@ export async function POST(req: NextRequest) {
     );
 
     // Match compose's cited step->frame timestamps to the closest captured
-    // screenshot and upload it, so it can be embedded under that step.
-    const stepScreenshots =
-      triage.type === 'bug'
-        ? await resolveStepScreenshots((content as BugContent).stepScreenshots, frames)
-        : [];
+    // screenshot and upload it, so it can be embedded under that step. Compose
+    // citing evidence is best-effort — if it cited nothing but Gemini did
+    // report real frame evidence, still attach one rather than shipping a
+    // ticket with zero visual evidence.
+    let stepScreenshots: Awaited<ReturnType<typeof resolveStepScreenshots>> = [];
+    if (triage.type === 'bug') {
+      stepScreenshots = await resolveStepScreenshots((content as BugContent).stepScreenshots, frames);
+      if (stepScreenshots.length === 0) {
+        stepScreenshots = await resolveStepScreenshots(fallbackStepScreenshotRefs(normalized), frames);
+      }
+      console.log(
+        `[ticket-pipeline] stepScreenshots: cited=${(content as BugContent).stepScreenshots?.length ?? 0} ` +
+          `resolved=${stepScreenshots.length} capturedFrames=${frames.length}`,
+      );
+    }
 
     // File the real Jira ticket. Low-confidence results are still auto-filed for
     // now (no review queue exists yet) — `needsReview` is passed through so the

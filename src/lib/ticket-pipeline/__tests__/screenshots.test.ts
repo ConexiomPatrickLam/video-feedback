@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { put } from '@vercel/blob';
-import { resolveStepScreenshots, type CapturedFrame } from '../screenshots';
+import { fallbackStepScreenshotRefs, resolveStepScreenshots, type CapturedFrame } from '../screenshots';
+import type { NormalizedInput } from '../types';
 
 vi.mock('@vercel/blob', () => ({ put: vi.fn() }));
 const mockPut = vi.mocked(put);
@@ -48,5 +49,34 @@ describe('resolveStepScreenshots', () => {
     const [, body, options] = mockPut.mock.calls[0];
     expect(Buffer.isBuffer(body)).toBe(true);
     expect(options).toMatchObject({ access: 'public', contentType: 'image/jpeg' });
+  });
+});
+
+function normalizedWith(observations: NormalizedInput['observations']): NormalizedInput {
+  return { summary: 's', intent: 'i', observations, entities: {}, quotes: [], gaps: [], confidence: 0.9 };
+}
+
+describe('fallbackStepScreenshotRefs', () => {
+  it('cites the first frame observation to step 0 when compose cited nothing', () => {
+    const normalized = normalizedWith([
+      { statement: 'user typed a note', source: 'text' },
+      { statement: 'error banner visible', source: 'frame', frameTimestampMs: 4200 },
+      { statement: 'second error banner', source: 'frame', frameTimestampMs: 7000 },
+    ]);
+
+    expect(fallbackStepScreenshotRefs(normalized)).toEqual([{ stepIndex: 0, frameTimestampMs: 4200 }]);
+  });
+
+  it('returns undefined when there are no frame observations at all', () => {
+    const normalized = normalizedWith([
+      { statement: 'typed note', source: 'text' },
+      { statement: 'spoken narration', source: 'transcript' },
+    ]);
+
+    expect(fallbackStepScreenshotRefs(normalized)).toBeUndefined();
+  });
+
+  it('returns undefined when there are no observations at all (e.g. text-only fallback)', () => {
+    expect(fallbackStepScreenshotRefs(normalizedWith([]))).toBeUndefined();
   });
 });
