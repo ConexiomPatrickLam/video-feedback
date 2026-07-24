@@ -91,7 +91,13 @@ const SCHEMA: Schema = {
   required: ["summary", "intent", "observations", "entities", "quotes", "gaps", "confidence"],
 };
 
-/** True when a Gemini call failed because the quota/rate limit was exhausted (HTTP 429). */
+/**
+ * True when a Gemini call failed for a *transient* reason worth retrying or
+ * falling back on: quota/rate-limit exhaustion (429/RESOURCE_EXHAUSTED) or a
+ * generic backend hiccup (500/INTERNAL, 503/UNAVAILABLE) — as opposed to a
+ * genuine request problem (e.g. 400/INVALID_ARGUMENT) that would just fail
+ * identically on retry.
+ */
 export function isGeminiQuotaError(err: unknown): boolean {
   const e = err as { status?: number | string; code?: number; message?: string } | undefined;
   const msg = String(e?.message ?? "");
@@ -100,7 +106,17 @@ export function isGeminiQuotaError(err: unknown): boolean {
     e?.code === 429 ||
     e?.status === "RESOURCE_EXHAUSTED" ||
     msg.includes("RESOURCE_EXHAUSTED") ||
-    msg.includes('"code":429')
+    msg.includes('"code":429') ||
+    e?.status === 500 ||
+    e?.code === 500 ||
+    e?.status === "INTERNAL" ||
+    msg.includes("INTERNAL") ||
+    msg.includes('"code":500') ||
+    e?.status === 503 ||
+    e?.code === 503 ||
+    e?.status === "UNAVAILABLE" ||
+    msg.includes("UNAVAILABLE") ||
+    msg.includes('"code":503')
   );
 }
 
